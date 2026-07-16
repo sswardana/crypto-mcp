@@ -1,20 +1,47 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
+import requests
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Crypto MCP is running!"
+    return "crypto mcp is running"
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    print(data)
+@app.route("/price/<symbol>")
+def price(symbol):
+    url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol.upper()}USDT"
+    
+    data = requests.get(url).json()
 
     return jsonify({
-        "status": "success",
-        "received": data
+        "symbol": data.get("symbol"),
+        "price": data.get("lastPrice"),
+        "change_24h": data.get("priceChangePercent"),
+        "volume": data.get("volume")
     })
 
+@app.route("/ssw")
+def ssw():
+    coins = ["BTC", "ETH", "SOL", "DEXE"]
+
+    result = []
+
+    for coin in coins:
+        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={coin}USDT"
+        data = requests.get(url).json()
+
+        result.append({
+            "symbol": coin,
+            "price": data.get("lastPrice"),
+            "change_24h": data.get("priceChangePercent"),
+            "volume": data.get("volume")
+        })
+
+    return jsonify({
+        "status": "SSW active",
+        "data": result
+    })
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=8080)
