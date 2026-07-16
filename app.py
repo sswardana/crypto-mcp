@@ -63,23 +63,48 @@ def levels(price, side):
 
     if side == "LONG":
         return {
-            "entry":price,
-            "tp1":round(price*1.015,8),
-            "tp2":round(price*1.03,8),
-            "sl":round(price*0.985,8)
+            "entry": price,
+            "tp1": round(price*1.015,8),
+            "tp2": round(price*1.03,8),
+            "sl": round(price*0.985,8)
         }
 
     return {
-        "entry":price,
-        "tp1":round(price*0.985,8),
-        "tp2":round(price*0.97,8),
-        "sl":round(price*1.015,8)
+        "entry": price,
+        "tp1": round(price*0.985,8),
+        "tp2": round(price*0.97,8),
+        "sl": round(price*1.015,8)
     }
+
+
+def check_risk(signal, btc, rsi_value):
+
+    if signal == "LONG" and btc == "BEARISH":
+        return "HIGH"
+
+    if signal == "SHORT" and rsi_value < 30:
+        return "HIGH"
+
+    if btc == "BULLISH":
+        return "LOW"
+
+    return "MEDIUM"
+
+
+def entry_quality(confidence, risk):
+
+    if confidence >= 80 and risk == "LOW":
+        return "GOOD"
+
+    if confidence >= 70:
+        return "CAUTION"
+
+    return "AVOID"
 
 
 def btc_trend():
 
-    candles=get_json(
+    candles = get_json(
         f"{BINANCE}/api/v3/klines",
         {
             "symbol":"BTCUSDT",
@@ -91,12 +116,12 @@ def btc_trend():
     if not candles:
         return "UNKNOWN"
 
-    close=[
+    close = [
         float(x[4])
         for x in candles
     ]
 
-    if ema(close,9)>ema(close,21):
+    if ema(close,9) > ema(close,21):
         return "BULLISH"
 
     return "BEARISH"
@@ -112,12 +137,14 @@ def scanner():
 
     btc = btc_trend()
 
-    ticker=get_json(
+    ticker = get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
     )
 
     if not ticker:
-        return jsonify({"error":"binance error"})
+        return jsonify({
+            "error":"binance error"
+        })
 
 
     coins=[]
@@ -135,7 +162,7 @@ def scanner():
         coins.append(c)
 
 
-    top30=sorted(
+    top30 = sorted(
         coins,
         key=lambda x:float(x["quoteVolume"]),
         reverse=True
@@ -183,13 +210,13 @@ def scanner():
         rsi_value=rsi(close)
 
         vol=round(
-            volume[-1]/
+            volume[-1] /
             (sum(volume[-20:])/20),
             2
         )
 
 
-        green=close[-1]>close[-2]
+        green = close[-1] > close[-2]
 
 
         long_score=0
@@ -199,7 +226,7 @@ def scanner():
         short_reason=[]
 
 
-        if e9>e21:
+        if e9 > e21:
             long_score+=30
             long_reason.append("EMA bullish")
         else:
@@ -207,20 +234,20 @@ def scanner():
             short_reason.append("EMA bearish")
 
 
-        if rsi_value>50:
+        if rsi_value > 50:
             long_score+=25
             long_reason.append("RSI strength")
 
-        if 30<rsi_value<45:
+        if 30 < rsi_value < 45:
             short_score+=20
             short_reason.append("RSI weakness")
 
-        if rsi_value<=30:
+        if rsi_value <= 30:
             short_score-=15
             short_reason.append("Oversold risk")
 
 
-        if vol>1:
+        if vol > 1:
             long_score+=20
             short_score+=20
             long_reason.append("Volume")
@@ -239,54 +266,60 @@ def scanner():
             long_score-=15
 
 
-        if long_score>=70:
+        if long_score >= 70:
 
             confidence=min(long_score,90)
 
-            grade = (
-                "STRONG LONG"
-                if confidence>=80
-                else
-                "NORMAL LONG"
+            risk=check_risk(
+                "LONG",
+                btc,
+                rsi_value
             )
 
             data={
                 "symbol":symbol,
                 "signal":"LONG",
-                "grade":grade,
+                "grade":"STRONG LONG" if confidence>=80 else "NORMAL LONG",
                 "confidence":confidence,
+                "risk":risk,
+                "entry_quality":entry_quality(confidence,risk),
                 "rsi":rsi_value,
                 "volume_ratio":vol,
                 "reason":long_reason
             }
 
-            data.update(levels(price,"LONG"))
+            data.update(
+                levels(price,"LONG")
+            )
 
             long.append(data)
 
 
-        elif short_score>=70:
+        elif short_score >= 70:
 
             confidence=min(short_score,90)
 
-            grade = (
-                "STRONG SHORT"
-                if confidence>=80
-                else
-                "NORMAL SHORT"
+            risk=check_risk(
+                "SHORT",
+                btc,
+                rsi_value
             )
 
             data={
                 "symbol":symbol,
                 "signal":"SHORT",
-                "grade":grade,
+                "grade":"STRONG SHORT" if confidence>=80 else "NORMAL SHORT",
                 "confidence":confidence,
+                "risk":risk,
+                "entry_quality":entry_quality(confidence,risk),
                 "rsi":rsi_value,
                 "volume_ratio":vol,
                 "reason":short_reason
             }
 
-            data.update(levels(price,"SHORT"))
+            data.update(
+                levels(price,"SHORT")
+            )
 
             short.append(data)
 
@@ -303,7 +336,7 @@ def scanner():
 
     return jsonify({
 
-        "scanner":"SSW v5.3 Quality",
+        "scanner":"SSW v5.4 Simple Risk",
         "timeframe":"15m",
 
         "market":{
@@ -336,41 +369,3 @@ if __name__=="__main__":
         host="0.0.0.0",
         port=8080
     )
-
-def check_risk(signal, btc, rsi):
-    if signal == "LONG" and btc == "BEARISH":
-        return "HIGH"
-
-    if signal == "SHORT" and rsi < 30:
-        return "HIGH"
-
-    if btc == "BULLISH":
-        return "LOW"
-
-    return "MEDIUM"
-
-
-def entry_quality(confidence, risk):
-    if confidence >= 80 and risk == "LOW":
-        return "GOOD"
-
-    if confidence >= 70:
-        return "CAUTION"
-
-    return "AVOID"
-
-
-"risk": check_risk(
-    "LONG",
-    btc,
-    rsi_value
-),
-
-"entry_quality": entry_quality(
-    confidence,
-    check_risk(
-        "LONG",
-        btc,
-        rsi_value
-    )
-)
