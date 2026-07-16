@@ -34,55 +34,52 @@ def ema(values, period):
     return result
 
 
-def calc_rsi(values, period=14):
+def rsi(values, period=14):
 
     if len(values) <= period:
         return 50
 
-    gains = 0
-    losses = 0
+    gain = 0
+    loss = 0
 
     for i in range(1, period+1):
 
         diff = values[-i] - values[-i-1]
 
         if diff > 0:
-            gains += diff
+            gain += diff
         else:
-            losses += abs(diff)
+            loss += abs(diff)
 
-    if losses == 0:
+    if loss == 0:
         return 100
 
-    rs = gains/losses
+    rs = gain/loss
 
-    return round(
-        100-(100/(1+rs)),
-        2
-    )
+    return round(100-(100/(1+rs)),2)
 
 
-def trade_levels(price, side):
+def levels(price, side):
 
     if side == "LONG":
         return {
             "entry":price,
-            "tp1":round(price*1.015,6),
-            "tp2":round(price*1.03,6),
-            "sl":round(price*0.985,6)
+            "tp1":round(price*1.015,8),
+            "tp2":round(price*1.03,8),
+            "sl":round(price*0.985,8)
         }
 
     return {
         "entry":price,
-        "tp1":round(price*0.985,6),
-        "tp2":round(price*0.97,6),
-        "sl":round(price*1.015,6)
+        "tp1":round(price*0.985,8),
+        "tp2":round(price*0.97,8),
+        "sl":round(price*1.015,8)
     }
 
 
-def btc_market():
+def btc_trend():
 
-    candles = get_json(
+    candles=get_json(
         f"{BINANCE}/api/v3/klines",
         {
             "symbol":"BTCUSDT",
@@ -94,17 +91,12 @@ def btc_market():
     if not candles:
         return "UNKNOWN"
 
-
     close=[
         float(x[4])
         for x in candles
     ]
 
-    e9=ema(close,9)
-    e21=ema(close,21)
-
-
-    if e9 > e21:
+    if ema(close,9)>ema(close,21):
         return "BULLISH"
 
     return "BEARISH"
@@ -118,18 +110,14 @@ def home():
 @app.route("/ssw15m")
 def scanner():
 
-    btc_trend = btc_market()
-
+    btc = btc_trend()
 
     ticker=get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
     )
 
-
     if not ticker:
-        return jsonify({
-            "error":"binance error"
-        })
+        return jsonify({"error":"binance error"})
 
 
     coins=[]
@@ -172,7 +160,6 @@ def scanner():
             }
         )
 
-
         if not candles:
             continue
 
@@ -193,16 +180,16 @@ def scanner():
         e9=ema(close,9)
         e21=ema(close,21)
 
-        rsi=calc_rsi(close)
+        rsi_value=rsi(close)
 
-        vol_ratio=round(
-            volume[-1] /
+        vol=round(
+            volume[-1]/
             (sum(volume[-20:])/20),
             2
         )
 
 
-        candle_up = close[-1] > close[-2]
+        green=close[-1]>close[-2]
 
 
         long_score=0
@@ -212,32 +199,35 @@ def scanner():
         short_reason=[]
 
 
-        if e9 > e21:
-            long_score+=35
+        if e9>e21:
+            long_score+=30
             long_reason.append("EMA bullish")
         else:
-            short_score+=35
+            short_score+=30
             short_reason.append("EMA bearish")
 
 
-        if rsi > 50:
+        if rsi_value>50:
             long_score+=25
             long_reason.append("RSI strength")
 
-        if rsi <45:
-            short_score+=25
+        if 30<rsi_value<45:
+            short_score+=20
             short_reason.append("RSI weakness")
 
+        if rsi_value<=30:
+            short_score-=15
+            short_reason.append("Oversold risk")
 
-        if vol_ratio > 1:
-            long_score+=25
-            short_score+=25
 
+        if vol>1:
+            long_score+=20
+            short_score+=20
             long_reason.append("Volume")
             short_reason.append("Volume")
 
 
-        if candle_up:
+        if green:
             long_score+=15
             long_reason.append("Green candle")
         else:
@@ -245,72 +235,79 @@ def scanner():
             short_reason.append("Red candle")
 
 
-        # BTC filter
-        if btc_trend=="BEARISH":
+        if btc=="BEARISH":
             long_score-=15
 
 
-        if (
-            long_score >=70
-            and btc_trend != "BEARISH"
-        ):
+        if long_score>=70:
 
-            item={
+            confidence=min(long_score,90)
+
+            grade = (
+                "STRONG LONG"
+                if confidence>=80
+                else
+                "NORMAL LONG"
+            )
+
+            data={
                 "symbol":symbol,
                 "signal":"LONG",
-                "confidence":long_score,
-                "rsi":rsi,
-                "volume_ratio":vol_ratio,
+                "grade":grade,
+                "confidence":confidence,
+                "rsi":rsi_value,
+                "volume_ratio":vol,
                 "reason":long_reason
             }
 
-            item.update(
-                trade_levels(price,"LONG")
+            data.update(levels(price,"LONG"))
+
+            long.append(data)
+
+
+        elif short_score>=70:
+
+            confidence=min(short_score,90)
+
+            grade = (
+                "STRONG SHORT"
+                if confidence>=80
+                else
+                "NORMAL SHORT"
             )
 
-            long.append(item)
-
-
-        elif (
-            short_score >=70
-            and rsi >30
-        ):
-
-            item={
+            data={
                 "symbol":symbol,
                 "signal":"SHORT",
-                "confidence":short_score,
-                "rsi":rsi,
-                "volume_ratio":vol_ratio,
+                "grade":grade,
+                "confidence":confidence,
+                "rsi":rsi_value,
+                "volume_ratio":vol,
                 "reason":short_reason
             }
 
-            item.update(
-                trade_levels(price,"SHORT")
-            )
+            data.update(levels(price,"SHORT"))
 
-            short.append(item)
+            short.append(data)
 
 
-        elif max(long_score,short_score) >=50:
+        elif max(long_score,short_score)>=50:
 
             watch.append({
-
                 "symbol":symbol,
                 "confidence":max(long_score,short_score),
-                "rsi":rsi,
-                "volume_ratio":vol_ratio
-
+                "rsi":rsi_value,
+                "volume_ratio":vol
             })
 
 
     return jsonify({
 
-        "scanner":"SSW v5.2 Calibration",
+        "scanner":"SSW v5.3 Quality",
         "timeframe":"15m",
 
         "market":{
-            "BTC":btc_trend
+            "BTC":btc
         },
 
         "long":sorted(
