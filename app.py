@@ -8,7 +8,8 @@ BINANCE = "https://api.binance.com"
 BLOCKLIST = [
     "USDC","FDUSD","BUSD",
     "TUSD","USDP","USD1",
-    "XAUT","PAXG"
+    "RLUSD","XAUT","PAXG",
+    "EUR"
 ]
 
 
@@ -31,37 +32,31 @@ def ema(values, period):
     k = 2/(period+1)
     result = sum(values[:period])/period
 
-    for price in values[period:]:
-        result = price*k + result*(1-k)
+    for x in values[period:]:
+        result = x*k + result*(1-k)
 
     return result
 
 
 def rsi(values, period=14):
-
     if len(values) <= period:
         return 50
 
-    gain = []
-    loss = []
+    gain = 0
+    loss = 0
 
-    for i in range(1,len(values)):
-        diff = values[i]-values[i-1]
+    for i in range(1, period+1):
+        diff = values[-i] - values[-i-1]
 
-        if diff >= 0:
-            gain.append(diff)
-            loss.append(0)
+        if diff > 0:
+            gain += diff
         else:
-            gain.append(0)
-            loss.append(abs(diff))
+            loss += abs(diff)
 
-    avg_gain = sum(gain[-period:])/period
-    avg_loss = sum(loss[-period:])/period
-
-    if avg_loss == 0:
+    if loss == 0:
         return 100
 
-    rs = avg_gain/avg_loss
+    rs = gain/loss
 
     return round(
         100-(100/(1+rs)),
@@ -75,7 +70,7 @@ def home():
 
 
 @app.route("/ssw15m")
-def scanner():
+def ssw():
 
     ticker = get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
@@ -87,17 +82,17 @@ def scanner():
 
     coins=[]
 
-    for x in ticker:
+    for c in ticker:
 
-        symbol=x["symbol"]
+        symbol=c["symbol"]
 
         if not symbol.endswith("USDT"):
             continue
 
-        if any(b in symbol for b in BLOCKLIST):
+        if any(x in symbol for x in BLOCKLIST):
             continue
 
-        coins.append(x)
+        coins.append(c)
 
 
     top30=sorted(
@@ -123,141 +118,135 @@ def scanner():
             }
         )
 
-
         if not candles:
             continue
 
 
-        close=[
+        closes=[
             float(x[4])
             for x in candles
         ]
 
-        volume=[
+        volumes=[
             float(x[5])
             for x in candles
         ]
 
 
-        current=close[-1]
+        price=closes[-1]
 
-        rsi_value=rsi(close)
+        rsi_value=rsi(closes)
 
-        ema9=ema(close,9)
-        ema21=ema(close,21)
+        ema9=ema(closes,9)
+        ema21=ema(closes,21)
 
-
-        avg_vol=sum(volume[-20:])/20
 
         volume_ratio=round(
-            volume[-1]/avg_vol,
+            volumes[-1] /
+            (sum(volumes[-20:])/20),
             2
         )
 
 
-        score=0
+        candle_green = closes[-1] > closes[-2]
+
+
+        confidence=0
         reason=[]
 
 
         if ema9 > ema21:
-            score+=30
+            confidence +=30
             reason.append("EMA bullish")
         else:
-            score-=20
+            confidence -=20
             reason.append("EMA bearish")
 
 
-        if 50 < rsi_value < 70:
-            score+=20
-            reason.append("RSI momentum")
+        if 55 <= rsi_value <=70:
+            confidence +=25
+            reason.append("RSI strong")
 
-        elif rsi_value < 35:
-            score-=10
+
+        if rsi_value <40:
+            confidence +=20
             reason.append("RSI weak")
 
 
-        if volume_ratio > 1.2:
-            score+=30
-            reason.append("Volume spike")
-
-        elif volume_ratio < 0.7:
-            score-=10
+        if volume_ratio >=1.2:
+            confidence +=30
+            reason.append("Volume confirmed")
 
 
-        if current > close[-2]:
-            score+=20
-            reason.append("Price naik")
+        if candle_green:
+            confidence +=15
+            reason.append("Candle bullish")
 
 
-        if score >=70:
+        signal="AVOID"
+
+
+        if (
+            ema9 > ema21
+            and 55 <= rsi_value <=70
+            and volume_ratio >=1.2
+            and candle_green
+        ):
             signal="LONG"
 
-        elif score <=20:
+
+        elif (
+            ema9 < ema21
+            and rsi_value <40
+            and volume_ratio >=1.2
+            and not candle_green
+        ):
             signal="SHORT"
 
-        else:
-            signal="WATCH"
+
+        if signal!="AVOID":
+
+            if signal=="LONG":
+
+                sl=round(price*0.985,6)
+                tp1=round(price*1.015,6)
+                tp2=round(price*1.03,6)
+
+            else:
+
+                sl=round(price*1.015,6)
+                tp1=round(price*0.985,6)
+                tp2=round(price*0.97,6)
 
 
-        entry=current
+            signals.append({
 
-        if signal=="LONG":
+                "symbol":symbol,
+                "signal":signal,
+                "confidence":confidence,
+                "entry":price,
+                "tp1":tp1,
+                "tp2":tp2,
+                "sl":sl,
+                "rsi":rsi_value,
+                "volume_ratio":volume_ratio,
+                "reason":reason
 
-            sl=round(
-                entry*0.985,
-                6
-            )
-
-            tp=round(
-                entry*1.03,
-                6
-            )
-
-        elif signal=="SHORT":
-
-            sl=round(
-                entry*1.015,
-                6
-            )
-
-            tp=round(
-                entry*0.97,
-                6
-            )
-
-        else:
-
-            sl=None
-            tp=None
-
-
-        signals.append({
-
-            "symbol":symbol,
-            "signal":signal,
-            "score":score,
-            "entry":entry,
-            "stop_loss":sl,
-            "take_profit":tp,
-            "rsi":rsi_value,
-            "volume_ratio":volume_ratio,
-            "reason":reason
-
-        })
+            })
 
 
     signals=sorted(
         signals,
-        key=lambda x:x["score"],
+        key=lambda x:x["confidence"],
         reverse=True
     )
 
 
     return jsonify({
 
-        "scanner":"SSW Scalping v4",
+        "scanner":"SSW v5 Sniper",
         "timeframe":"15m",
-        "signals":signals[:20]
+        "signals":signals[:10]
 
     })
 
