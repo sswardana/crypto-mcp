@@ -6,9 +6,9 @@ app = Flask(__name__)
 BINANCE = "https://api.binance.com"
 
 BLOCKLIST = [
-    "USDC", "FDUSD", "BUSD",
-    "TUSD", "USDP", "USD1",
-    "XAUT", "PAXG"
+    "USDC","FDUSD","BUSD",
+    "TUSD","USDP","USD1",
+    "XAUT","PAXG"
 ]
 
 
@@ -24,49 +24,47 @@ def get_json(url, params=None):
         return None
 
 
-def calculate_ema(data, period):
-    if len(data) < period:
+def ema(values, period):
+    if len(values) < period:
         return 0
 
-    multiplier = 2 / (period + 1)
-    ema_value = sum(data[:period]) / period
+    k = 2/(period+1)
+    result = sum(values[:period])/period
 
-    for price in data[period:]:
-        ema_value = (
-            price - ema_value
-        ) * multiplier + ema_value
+    for price in values[period:]:
+        result = price*k + result*(1-k)
 
-    return ema_value
+    return result
 
 
-def calculate_rsi(prices, period=14):
+def rsi(values, period=14):
 
-    if len(prices) <= period:
+    if len(values) <= period:
         return 50
 
-    gains = []
-    losses = []
+    gain = []
+    loss = []
 
-    for i in range(1, len(prices)):
-        change = prices[i] - prices[i-1]
+    for i in range(1,len(values)):
+        diff = values[i]-values[i-1]
 
-        if change > 0:
-            gains.append(change)
-            losses.append(0)
+        if diff >= 0:
+            gain.append(diff)
+            loss.append(0)
         else:
-            gains.append(0)
-            losses.append(abs(change))
+            gain.append(0)
+            loss.append(abs(diff))
 
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
+    avg_gain = sum(gain[-period:])/period
+    avg_loss = sum(loss[-period:])/period
 
     if avg_loss == 0:
         return 100
 
-    rs = avg_gain / avg_loss
+    rs = avg_gain/avg_loss
 
     return round(
-        100 - (100/(1+rs)),
+        100-(100/(1+rs)),
         2
     )
 
@@ -77,52 +75,46 @@ def home():
 
 
 @app.route("/ssw15m")
-def ssw15m():
+def scanner():
 
     ticker = get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
     )
 
     if not ticker:
-        return jsonify({
-            "error":"Binance unavailable"
-        })
+        return jsonify({"error":"binance error"})
 
 
-    coins = []
+    coins=[]
 
     for x in ticker:
 
-        symbol = x["symbol"]
+        symbol=x["symbol"]
 
         if not symbol.endswith("USDT"):
             continue
 
-        if any(
-            block in symbol
-            for block in BLOCKLIST
-        ):
+        if any(b in symbol for b in BLOCKLIST):
             continue
 
         coins.append(x)
 
 
-    top10 = sorted(
+    top30=sorted(
         coins,
-        key=lambda x: float(x["quoteVolume"]),
+        key=lambda x:float(x["quoteVolume"]),
         reverse=True
-    )[:10]
+    )[:30]
 
 
-    results = []
+    signals=[]
 
 
-    for coin in top10:
+    for coin in top30:
 
-        symbol = coin["symbol"]
+        symbol=coin["symbol"]
 
-
-        candles = get_json(
+        candles=get_json(
             f"{BINANCE}/api/v3/klines",
             {
                 "symbol":symbol,
@@ -136,101 +128,126 @@ def ssw15m():
             continue
 
 
-        closes = [
-            float(c[4])
-            for c in candles
+        close=[
+            float(x[4])
+            for x in candles
+        ]
+
+        volume=[
+            float(x[5])
+            for x in candles
         ]
 
 
-        volumes = [
-            float(c[5])
-            for c in candles
-        ]
+        current=close[-1]
+
+        rsi_value=rsi(close)
+
+        ema9=ema(close,9)
+        ema21=ema(close,21)
 
 
-        rsi = calculate_rsi(
-            closes
-        )
+        avg_vol=sum(volume[-20:])/20
 
-        ema9 = calculate_ema(
-            closes,
-            9
-        )
-
-        ema21 = calculate_ema(
-            closes,
-            21
-        )
-
-
-        avg_volume = (
-            sum(volumes[-20:])
-            /
-            20
-        )
-
-        volume_ratio = round(
-            volumes[-1]/avg_volume,
+        volume_ratio=round(
+            volume[-1]/avg_vol,
             2
         )
 
 
-        score = 0
-        reason = []
+        score=0
+        reason=[]
 
 
         if ema9 > ema21:
-            score += 30
-            reason.append(
-                "EMA bullish"
+            score+=30
+            reason.append("EMA bullish")
+        else:
+            score-=20
+            reason.append("EMA bearish")
+
+
+        if 50 < rsi_value < 70:
+            score+=20
+            reason.append("RSI momentum")
+
+        elif rsi_value < 35:
+            score-=10
+            reason.append("RSI weak")
+
+
+        if volume_ratio > 1.2:
+            score+=30
+            reason.append("Volume spike")
+
+        elif volume_ratio < 0.7:
+            score-=10
+
+
+        if current > close[-2]:
+            score+=20
+            reason.append("Price naik")
+
+
+        if score >=70:
+            signal="LONG"
+
+        elif score <=20:
+            signal="SHORT"
+
+        else:
+            signal="WATCH"
+
+
+        entry=current
+
+        if signal=="LONG":
+
+            sl=round(
+                entry*0.985,
+                6
             )
 
-
-        if 50 < rsi < 70:
-            score += 20
-            reason.append(
-                "RSI momentum"
+            tp=round(
+                entry*1.03,
+                6
             )
 
+        elif signal=="SHORT":
 
-        if volume_ratio > 1.5:
-            score += 30
-            reason.append(
-                "Volume spike"
+            sl=round(
+                entry*1.015,
+                6
             )
 
-
-        if closes[-1] > closes[-2]:
-            score += 20
-            reason.append(
-                "Price naik"
+            tp=round(
+                entry*0.97,
+                6
             )
 
+        else:
 
-        signal = "NEUTRAL"
-
-        if score >= 70:
-            signal = "BULLISH"
-
-        elif score <=30:
-            signal = "BEARISH"
+            sl=None
+            tp=None
 
 
-        results.append({
+        signals.append({
 
             "symbol":symbol,
-            "price":closes[-1],
-            "score":score,
             "signal":signal,
-            "rsi":rsi,
+            "score":score,
+            "entry":entry,
+            "stop_loss":sl,
+            "take_profit":tp,
+            "rsi":rsi_value,
             "volume_ratio":volume_ratio,
             "reason":reason
 
         })
 
 
-    results = sorted(
-        results,
+    signals=sorted(
+        signals,
         key=lambda x:x["score"],
         reverse=True
     )
@@ -238,15 +255,14 @@ def ssw15m():
 
     return jsonify({
 
-        "scanner":"SSW Scalping v3.1 Lite",
+        "scanner":"SSW Scalping v4",
         "timeframe":"15m",
-        "scanned":len(results),
-        "signals":results
+        "signals":signals[:20]
 
     })
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run(
         host="0.0.0.0",
         port=8080
