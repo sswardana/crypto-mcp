@@ -266,7 +266,7 @@ def scanner():
             long_score-=15
 
 
-        if long_score >= 70:
+        if long_score >= 80:
 
             confidence=min(long_score,90)
 
@@ -295,7 +295,7 @@ def scanner():
             long.append(data)
 
 
-        elif short_score >= 70:
+        elif short_score >= 80:
 
             confidence=min(short_score,90)
 
