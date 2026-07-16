@@ -5,33 +5,52 @@ app = Flask(__name__)
 
 BINANCE = "https://api.binance.com"
 
-
-# filter coin yang tidak cocok untuk scalping
 BLOCKLIST = [
-    "USDC", "FDUSD", "USDT", "BUSD",
+    "USDC", "FDUSD", "BUSD",
     "TUSD", "USDP", "USD1",
     "XAUT", "PAXG"
 ]
 
 
-def ema(values, period):
-    k = 2 / (period + 1)
-    ema_value = values[0]
+def get_json(url, params=None):
+    try:
+        r = requests.get(
+            url,
+            params=params,
+            timeout=5
+        )
+        return r.json()
+    except:
+        return None
 
-    for price in values[1:]:
-        ema_value = price * k + ema_value * (1-k)
+
+def calculate_ema(data, period):
+    if len(data) < period:
+        return 0
+
+    multiplier = 2 / (period + 1)
+    ema_value = sum(data[:period]) / period
+
+    for price in data[period:]:
+        ema_value = (
+            price - ema_value
+        ) * multiplier + ema_value
 
     return ema_value
 
 
-def rsi(values, period=14):
+def calculate_rsi(prices, period=14):
+
+    if len(prices) <= period:
+        return 50
+
     gains = []
     losses = []
 
-    for i in range(1, len(values)):
-        change = values[i] - values[i-1]
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i-1]
 
-        if change >= 0:
+        if change > 0:
             gains.append(change)
             losses.append(0)
         else:
@@ -46,7 +65,10 @@ def rsi(values, period=14):
 
     rs = avg_gain / avg_loss
 
-    return round(100 - (100/(1+rs)), 2)
+    return round(
+        100 - (100/(1+rs)),
+        2
+    )
 
 
 @app.route("/")
@@ -57,12 +79,17 @@ def home():
 @app.route("/ssw15m")
 def ssw15m():
 
-    ticker = requests.get(
+    ticker = get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
-    ).json()
+    )
+
+    if not ticker:
+        return jsonify({
+            "error":"Binance unavailable"
+        })
 
 
-    pairs = []
+    coins = []
 
     for x in ticker:
 
@@ -71,129 +98,151 @@ def ssw15m():
         if not symbol.endswith("USDT"):
             continue
 
-        if any(block in symbol for block in BLOCKLIST):
+        if any(
+            block in symbol
+            for block in BLOCKLIST
+        ):
             continue
 
-        pairs.append(x)
+        coins.append(x)
 
 
-    top50 = sorted(
-        pairs,
+    top10 = sorted(
+        coins,
         key=lambda x: float(x["quoteVolume"]),
         reverse=True
-    )[:50]
+    )[:10]
 
 
-    signals = []
+    results = []
 
 
-    for coin in top50:
+    for coin in top10:
 
         symbol = coin["symbol"]
 
-        try:
 
-            candles = requests.get(
-                f"{BINANCE}/api/v3/klines",
-                params={
-                    "symbol": symbol,
-                    "interval":"15m",
-                    "limit":50
-                }
-            ).json()
-
-
-            closes = [
-                float(c[4])
-                for c in candles
-            ]
-
-            volumes = [
-                float(c[5])
-                for c in candles
-            ]
-
-
-            last_price = closes[-1]
-
-            rsi_value = rsi(closes)
-
-            ema9 = ema(
-                closes[-30:],
-                9
-            )
-
-            ema21 = ema(
-                closes[-30:],
-                21
-            )
-
-
-            avg_volume = sum(volumes[-20:])/20
-
-            volume_spike = round(
-                volumes[-1]/avg_volume,
-                2
-            )
-
-
-            score = 0
-            reason = []
-
-
-            if ema9 > ema21:
-                score += 30
-                reason.append("EMA bullish")
-
-
-            if 50 < rsi_value < 70:
-                score += 20
-                reason.append("RSI momentum")
-
-
-            if volume_spike > 1.5:
-                score += 30
-                reason.append("Volume spike")
-
-
-            if closes[-1] > closes[-2]:
-                score += 20
-                reason.append("Price naik")
-
-
-            signal = "NEUTRAL"
-
-            if score >= 70:
-                signal = "BULLISH"
-
-            elif score <=30:
-                signal = "BEARISH"
-
-
-            signals.append({
+        candles = get_json(
+            f"{BINANCE}/api/v3/klines",
+            {
                 "symbol":symbol,
-                "price":last_price,
-                "score":score,
-                "signal":signal,
-                "rsi":rsi_value,
-                "volume_spike":volume_spike,
-                "reason":reason
-
-                except Exception as e:
-    print(symbol, e)
+                "interval":"15m",
+                "limit":50
+            }
+        )
 
 
-    signals = sorted(
-        signals,
+        if not candles:
+            continue
+
+
+        closes = [
+            float(c[4])
+            for c in candles
+        ]
+
+
+        volumes = [
+            float(c[5])
+            for c in candles
+        ]
+
+
+        rsi = calculate_rsi(
+            closes
+        )
+
+        ema9 = calculate_ema(
+            closes,
+            9
+        )
+
+        ema21 = calculate_ema(
+            closes,
+            21
+        )
+
+
+        avg_volume = (
+            sum(volumes[-20:])
+            /
+            20
+        )
+
+        volume_ratio = round(
+            volumes[-1]/avg_volume,
+            2
+        )
+
+
+        score = 0
+        reason = []
+
+
+        if ema9 > ema21:
+            score += 30
+            reason.append(
+                "EMA bullish"
+            )
+
+
+        if 50 < rsi < 70:
+            score += 20
+            reason.append(
+                "RSI momentum"
+            )
+
+
+        if volume_ratio > 1.5:
+            score += 30
+            reason.append(
+                "Volume spike"
+            )
+
+
+        if closes[-1] > closes[-2]:
+            score += 20
+            reason.append(
+                "Price naik"
+            )
+
+
+        signal = "NEUTRAL"
+
+        if score >= 70:
+            signal = "BULLISH"
+
+        elif score <=30:
+            signal = "BEARISH"
+
+
+        results.append({
+
+            "symbol":symbol,
+            "price":closes[-1],
+            "score":score,
+            "signal":signal,
+            "rsi":rsi,
+            "volume_ratio":volume_ratio,
+            "reason":reason
+
+        })
+
+
+    results = sorted(
+        results,
         key=lambda x:x["score"],
         reverse=True
     )
 
 
     return jsonify({
-        "scanner":"SSW Scalping v3",
+
+        "scanner":"SSW Scalping v3.1 Lite",
         "timeframe":"15m",
-        "signals":signals[:20]
+        "scanned":len(results),
+        "signals":results
+
     })
 
 
