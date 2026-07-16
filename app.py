@@ -336,3 +336,41 @@ if __name__=="__main__":
         host="0.0.0.0",
         port=8080
     )
+
+def check_risk(signal, btc, rsi):
+    if signal == "LONG" and btc == "BEARISH":
+        return "HIGH"
+
+    if signal == "SHORT" and rsi < 30:
+        return "HIGH"
+
+    if btc == "BULLISH":
+        return "LOW"
+
+    return "MEDIUM"
+
+
+def entry_quality(confidence, risk):
+    if confidence >= 80 and risk == "LOW":
+        return "GOOD"
+
+    if confidence >= 70:
+        return "CAUTION"
+
+    return "AVOID"
+
+
+"risk": check_risk(
+    "LONG",
+    btc,
+    rsi_value
+),
+
+"entry_quality": entry_quality(
+    confidence,
+    check_risk(
+        "LONG",
+        btc,
+        rsi_value
+    )
+)
