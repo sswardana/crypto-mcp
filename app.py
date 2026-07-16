@@ -230,4 +230,40 @@ def ssw():
             short.append(item)
 
 
-        elif
+        elif confidence >=50:
+
+            item["signal"]="WATCH"
+            watch.append(item)
+
+
+
+    return jsonify({
+
+        "scanner":"SSW v5.1 Balanced",
+        "timeframe":"15m",
+        "long":sorted(
+            long,
+            key=lambda x:x["confidence"],
+            reverse=True
+        )[:5],
+
+        "short":sorted(
+            short,
+            key=lambda x:x["confidence"],
+            reverse=True
+        )[:5],
+
+        "watchlist":sorted(
+            watch,
+            key=lambda x:x["confidence"],
+            reverse=True
+        )[:10]
+
+    })
+
+
+if __name__=="__main__":
+    app.run(
+        host="0.0.0.0",
+        port=8080
+    )
