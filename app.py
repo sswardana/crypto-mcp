@@ -28,53 +28,86 @@ def ema(values, period):
     k = 2/(period+1)
     result = sum(values[:period])/period
 
-    for price in values[period:]:
-        result = price*k + result*(1-k)
+    for x in values[period:]:
+        result = x*k + result*(1-k)
 
     return result
 
 
-def rsi(values, period=14):
+def calc_rsi(values, period=14):
 
     if len(values) <= period:
         return 50
 
-    gain = 0
-    loss = 0
+    gains = 0
+    losses = 0
 
     for i in range(1, period+1):
+
         diff = values[-i] - values[-i-1]
 
         if diff > 0:
-            gain += diff
+            gains += diff
         else:
-            loss += abs(diff)
+            losses += abs(diff)
 
-    if loss == 0:
+    if losses == 0:
         return 100
 
-    rs = gain/loss
+    rs = gains/losses
 
-    return round(100-(100/(1+rs)),2)
+    return round(
+        100-(100/(1+rs)),
+        2
+    )
 
 
-def make_trade(price, side):
+def trade_levels(price, side):
 
     if side == "LONG":
         return {
-            "entry": price,
-            "tp1": round(price*1.015,6),
-            "tp2": round(price*1.03,6),
-            "sl": round(price*0.985,6)
+            "entry":price,
+            "tp1":round(price*1.015,6),
+            "tp2":round(price*1.03,6),
+            "sl":round(price*0.985,6)
         }
 
-    if side == "SHORT":
-        return {
-            "entry": price,
-            "tp1": round(price*0.985,6),
-            "tp2": round(price*0.97,6),
-            "sl": round(price*1.015,6)
+    return {
+        "entry":price,
+        "tp1":round(price*0.985,6),
+        "tp2":round(price*0.97,6),
+        "sl":round(price*1.015,6)
+    }
+
+
+def btc_market():
+
+    candles = get_json(
+        f"{BINANCE}/api/v3/klines",
+        {
+            "symbol":"BTCUSDT",
+            "interval":"15m",
+            "limit":50
         }
+    )
+
+    if not candles:
+        return "UNKNOWN"
+
+
+    close=[
+        float(x[4])
+        for x in candles
+    ]
+
+    e9=ema(close,9)
+    e21=ema(close,21)
+
+
+    if e9 > e21:
+        return "BULLISH"
+
+    return "BEARISH"
 
 
 @app.route("/")
@@ -83,14 +116,20 @@ def home():
 
 
 @app.route("/ssw15m")
-def ssw():
+def scanner():
 
-    ticker = get_json(
+    btc_trend = btc_market()
+
+
+    ticker=get_json(
         f"{BINANCE}/api/v3/ticker/24hr"
     )
 
+
     if not ticker:
-        return jsonify({"error":"binance error"})
+        return jsonify({
+            "error":"binance error"
+        })
 
 
     coins=[]
@@ -108,7 +147,7 @@ def ssw():
         coins.append(c)
 
 
-    top30 = sorted(
+    top30=sorted(
         coins,
         key=lambda x:float(x["quoteVolume"]),
         reverse=True
@@ -116,8 +155,8 @@ def ssw():
 
 
     long=[]
-    watch=[]
     short=[]
+    watch=[]
 
 
     for coin in top30:
@@ -133,114 +172,147 @@ def ssw():
             }
         )
 
+
         if not candles:
             continue
 
 
-        closes=[
+        close=[
             float(x[4])
             for x in candles
         ]
 
-        volumes=[
+        volume=[
             float(x[5])
             for x in candles
         ]
 
 
-        price=closes[-1]
+        price=close[-1]
 
-        ema9=ema(closes,9)
-        ema21=ema(closes,21)
+        e9=ema(close,9)
+        e21=ema(close,21)
 
-        rsi_value=rsi(closes)
+        rsi=calc_rsi(close)
 
-        volume_ratio=round(
-            volumes[-1] /
-            (sum(volumes[-20:])/20),
+        vol_ratio=round(
+            volume[-1] /
+            (sum(volume[-20:])/20),
             2
         )
 
 
-        confidence=0
-        reason=[]
+        candle_up = close[-1] > close[-2]
 
 
-        if ema9 > ema21:
-            confidence+=30
-            reason.append("EMA bullish")
+        long_score=0
+        short_score=0
+
+        long_reason=[]
+        short_reason=[]
+
+
+        if e9 > e21:
+            long_score+=35
+            long_reason.append("EMA bullish")
         else:
-            confidence-=20
-            reason.append("EMA bearish")
+            short_score+=35
+            short_reason.append("EMA bearish")
 
 
-        if rsi_value > 50:
-            confidence+=25
-            reason.append("RSI naik")
+        if rsi > 50:
+            long_score+=25
+            long_reason.append("RSI strength")
 
-        elif rsi_value <45:
-            confidence+=20
-            reason.append("RSI lemah")
-
-
-        if volume_ratio > 1:
-            confidence+=25
-            reason.append("Volume masuk")
+        if rsi <45:
+            short_score+=25
+            short_reason.append("RSI weakness")
 
 
-        if closes[-1] > closes[-2]:
-            confidence+=10
-            reason.append("Candle hijau")
+        if vol_ratio > 1:
+            long_score+=25
+            short_score+=25
+
+            long_reason.append("Volume")
+            short_reason.append("Volume")
 
 
-        item={
-            "symbol":symbol,
-            "confidence":confidence,
-            "rsi":rsi_value,
-            "volume_ratio":volume_ratio,
-            "reason":reason
-        }
+        if candle_up:
+            long_score+=15
+            long_reason.append("Green candle")
+        else:
+            short_score+=15
+            short_reason.append("Red candle")
+
+
+        # BTC filter
+        if btc_trend=="BEARISH":
+            long_score-=15
 
 
         if (
-            ema9 > ema21
-            and rsi_value >50
-            and volume_ratio >1
+            long_score >=70
+            and btc_trend != "BEARISH"
         ):
 
+            item={
+                "symbol":symbol,
+                "signal":"LONG",
+                "confidence":long_score,
+                "rsi":rsi,
+                "volume_ratio":vol_ratio,
+                "reason":long_reason
+            }
+
             item.update(
-                make_trade(price,"LONG")
+                trade_levels(price,"LONG")
             )
 
-            item["signal"]="LONG"
             long.append(item)
 
 
         elif (
-            ema9 < ema21
-            and rsi_value <45
-            and volume_ratio >1
+            short_score >=70
+            and rsi >30
         ):
 
+            item={
+                "symbol":symbol,
+                "signal":"SHORT",
+                "confidence":short_score,
+                "rsi":rsi,
+                "volume_ratio":vol_ratio,
+                "reason":short_reason
+            }
+
             item.update(
-                make_trade(price,"SHORT")
+                trade_levels(price,"SHORT")
             )
 
-            item["signal"]="SHORT"
             short.append(item)
 
 
-        elif confidence >=50:
+        elif max(long_score,short_score) >=50:
 
-            item["signal"]="WATCH"
-            watch.append(item)
+            watch.append({
 
+                "symbol":symbol,
+                "confidence":max(long_score,short_score),
+                "rsi":rsi,
+                "volume_ratio":vol_ratio
+
+            })
 
 
     return jsonify({
 
-        "scanner":"SSW v5.1 Balanced",
+        "scanner":"SSW v5.2 Calibration",
         "timeframe":"15m",
+
+        "market":{
+            "BTC":btc_trend
+        },
+
         "long":sorted(
             long,
             key=lambda x:x["confidence"],
