@@ -3,45 +3,80 @@ import requests
 
 app = Flask(__name__)
 
+BINANCE = "https://api.binance.com"
+
+
 @app.route("/")
 def home():
     return "crypto mcp is running"
 
-@app.route("/price/<symbol>")
-def price(symbol):
-    url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol.upper()}USDT"
-    
-    data = requests.get(url).json()
 
-    return jsonify({
-        "symbol": data.get("symbol"),
-        "price": data.get("lastPrice"),
-        "change_24h": data.get("priceChangePercent"),
-        "volume": data.get("volume")
-    })
+# Ambil top 50 pair USDT berdasarkan volume
+@app.route("/ssw15m")
+def ssw15m():
 
-@app.route("/ssw")
-def ssw():
-    coins = ["BTC", "ETH", "SOL", "DEXE"]
+    ticker = requests.get(
+        f"{BINANCE}/api/v3/ticker/24hr"
+    ).json()
+
+    usdt_pairs = [
+        x for x in ticker
+        if x["symbol"].endswith("USDT")
+        and not any(c in x["symbol"] for c in ["UP","DOWN","BULL","BEAR"])
+    ]
+
+    top50 = sorted(
+        usdt_pairs,
+        key=lambda x: float(x["quoteVolume"]),
+        reverse=True
+    )[:50]
+
 
     result = []
 
-    for coin in coins:
-        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={coin}USDT"
-        data = requests.get(url).json()
+    for coin in top50:
 
-        result.append({
-            "symbol": coin,
-            "price": data.get("lastPrice"),
-            "change_24h": data.get("priceChangePercent"),
-            "volume": data.get("volume")
-        })
+        symbol = coin["symbol"]
+
+        candles = requests.get(
+            f"{BINANCE}/api/v3/klines",
+            params={
+                "symbol": symbol,
+                "interval": "15m",
+                "limit": 50
+            }
+        ).json()
+
+
+        if isinstance(candles, list):
+
+            last = candles[-1]
+
+            price_change = (
+                (float(last[4])-float(last[1]))
+                / float(last[1])
+            ) * 100
+
+
+            result.append({
+                "symbol": symbol,
+                "price": last[4],
+                "change_15m": round(price_change,2),
+                "volume": last[5],
+                "volume24h": coin["quoteVolume"]
+            })
+
 
     return jsonify({
-        "status": "SSW active",
+        "scanner": "SSW Scalping",
+        "timeframe": "15m",
+        "coins_scanned": len(result),
         "data": result
     })
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(
+        host="0.0.0.0",
+        port=8080
+    )
