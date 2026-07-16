@@ -178,11 +178,9 @@ def ssw15m():
                 "rsi":rsi_value,
                 "volume_spike":volume_spike,
                 "reason":reason
-            })
 
-
-        except:
-            pass
+                except Exception as e:
+    print(symbol, e)
 
 
     signals = sorted(
