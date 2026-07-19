@@ -93,7 +93,7 @@ def check_risk(signal, btc, rsi_value):
 
 def entry_quality(confidence, risk):
 
-    if confidence >= 80 and risk == "LOW":
+    if confidence >= 90 and risk == "LOW":
         return "GOOD"
 
     if confidence >= 70:
@@ -266,7 +266,7 @@ def scanner():
             long_score-=15
 
 
-        if long_score >= 80:
+        if long_score >= 90:
 
             confidence=min(long_score,90)
 
@@ -295,7 +295,7 @@ def scanner():
             long.append(data)
 
 
-        elif short_score >= 80:
+        elif short_score >= 90:
 
             confidence=min(short_score,90)
 
