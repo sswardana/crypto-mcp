@@ -266,9 +266,9 @@ def scanner():
             long_score-=15
 
 
-        if long_score >= 90:
+        if long_score >= 95:
 
-            confidence=min(long_score,90)
+            confidence=min(long_score,95)
 
             risk=check_risk(
                 "LONG",
@@ -295,9 +295,9 @@ def scanner():
             long.append(data)
 
 
-        elif short_score >= 90:
+        elif short_score >= 95:
 
-            confidence=min(short_score,90)
+            confidence=min(short_score,95)
 
             risk=check_risk(
                 "SHORT",
